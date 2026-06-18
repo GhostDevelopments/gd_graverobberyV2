@@ -21,7 +21,6 @@ local function applyAntiCheat(src)
     local player = exports.qbx_core:GetPlayer(src)
     if not player then return false end
 
-    local identifier = player.PlayerData.licenses
     local id = player.PlayerData.license
 
     if not graveCooldowns[id] then
@@ -103,19 +102,18 @@ local function generateLoot()
 
     for _ = 1, numItems do
         local roll = math.random(1, 100)
+        local totalChance = 0
 
         for _, lootItem in ipairs(config.Loot) do
-            if roll <= lootItem.chance then
+            totalChance = totalChance + lootItem.chance
+            if roll <= totalChance then
                 local amount = math.random(lootItem.min, lootItem.max)
-                debugLog(("Loot roll: %d - Found %dx %s"):format(roll, amount, lootItem.item))
+                debugLog(("Loot roll: %d (TotalChance: %d) - Found %dx %s"):format(roll, totalChance, amount, lootItem.item))
 
                 if lootItem.item == "money" then
-                    items["cash"] = amount
+                    items["cash"] = (items["cash"] or 0) + amount
                 else
-                    if not items[lootItem.item] then
-                        items[lootItem.item] = 0
-                    end
-                    items[lootItem.item] = items[lootItem.item] + amount
+                    items[lootItem.item] = (items[lootItem.item] or 0) + amount
                 end
                 break
             end
@@ -196,7 +194,7 @@ RegisterNetEvent("grave_robbery:server:digGrave", function(graveIndex)
 
     if not applyAntiCheat(src) then return end
 
-    local hasItem = exports.ox_inventory:Search(src, "count", config.RequiredItem) > 0
+    local hasItem = exports.ox_inventory:GetItemCount(src, config.RequiredItem) > 0
     if not hasItem then
         lib.notify(src, {
             title = "Grave Robbery",
@@ -211,11 +209,16 @@ RegisterNetEvent("grave_robbery:server:digGrave", function(graveIndex)
     setGraveCooldown(graveIndex)
 end)
 
-lib.addCommand("graverobbery", function(src)
+lib.addCommand("graverobbery", {
+    help = "Reset grave robbery cooldowns (Police rank 2+)",
+    params = {},
+    restricted = "group.police"
+}, function(src)
     local player = exports.qbx_core:GetPlayer(src)
     if not player then return end
 
-    if player.PlayerData.job.name == "police" and player.PlayerData.job.grade.level >= 2 then
+    -- Grade is a number in Qbox
+    if player.PlayerData.job.grade.level >= 2 then
         for k in pairs(graveCooldowns) do
             if type(k) == "string" and k:find("grave_") then
                 graveCooldowns[k] = nil
@@ -230,18 +233,18 @@ lib.addCommand("graverobbery", function(src)
     else
         lib.notify(src, {
             title = "Grave Robbery",
-            description = "You don't have permission to use this command",
+            description = "You need to be at least grade 2 (Police) to use this",
             type = "error"
         })
     end
-end, {
-    help = "Reset grave robbery cooldowns (Police rank 2+)",
-    params = {}
-})
+end)
 
 -- Admin Commands (ACE restricted: command.admin)
 
-lib.addCommand("command.admin", "gr_inspect", function(src)
+lib.addCommand("gr_inspect", {
+    help = "Inspect active cooldowns and player anti-cheat data (Console output)",
+    restricted = "command.admin"
+}, function(src)
     local activeCooldowns = 0
     local now = os.time()
 
@@ -264,11 +267,15 @@ lib.addCommand("command.admin", "gr_inspect", function(src)
         description = "State printed to server console",
         type = "inform"
     })
-end, {
-    help = "Inspect active cooldowns and player anti-cheat data (Console output)"
-})
+end)
 
-lib.addCommand("command.admin", "gr_reset", function(src, args)
+lib.addCommand("gr_reset", {
+    help = "Reset all or specific grave cooldowns",
+    params = {
+        { name = "index", help = "Grave index or 'all'", type = "string", optional = true }
+    },
+    restricted = "command.admin"
+}, function(src, args)
     local target = args.index
     if not target or target == "all" then
         for k in pairs(graveCooldowns) do
@@ -287,14 +294,16 @@ lib.addCommand("command.admin", "gr_reset", function(src, args)
             lib.notify(src, { title = "Admin: Reset", description = "Invalid grave index", type = "error" })
         end
     end
-end, {
-    help = "Reset all or specific grave cooldowns",
-    params = {
-        { name = "index", help = "Grave index or 'all'", type = "string" }
-    }
-})
+end)
 
-lib.addCommand("command.admin", "gr_force", function(src, args)
+lib.addCommand("gr_force", {
+    help = "Force a dig event for a player (ignores cooldown/items)",
+    params = {
+        { name = "target", help = "Player Server ID", type = "number" },
+        { name = "index", help = "Grave index", type = "number" }
+    },
+    restricted = "command.admin"
+}, function(src, args)
     local targetId = args.target
     local graveIndex = args.index
 
@@ -317,15 +326,15 @@ lib.addCommand("command.admin", "gr_force", function(src, args)
         description = string.format("Forced dig at grave %d for player %d", graveIndex, targetId),
         type = "success"
     })
-end, {
-    help = "Force a dig event for a player (ignores cooldown/items)",
-    params = {
-        { name = "target", help = "Player Server ID", type = "number" },
-        { name = "index", help = "Grave index", type = "number" }
-    }
-})
+end)
 
-lib.addCommand("command.admin", "gr_reward", function(src, args)
+lib.addCommand("gr_reward", {
+    help = "Manually grant random grave loot to a player",
+    params = {
+        { name = "target", help = "Player Server ID", type = "number" }
+    },
+    restricted = "command.admin"
+}, function(src, args)
     local targetId = args.target
     if not exports.qbx_core:GetPlayer(targetId) then
         lib.notify(src, { title = "Admin: Reward", description = "Invalid player ID", type = "error" })
@@ -340,14 +349,12 @@ lib.addCommand("command.admin", "gr_reward", function(src, args)
         description = "Granted random grave loot to player " .. targetId,
         type = "success"
     })
-end, {
-    help = "Manually grant random grave loot to a player",
-    params = {
-        { name = "target", help = "Player Server ID", type = "number" }
-    }
-})
+end)
 
-lib.addCommand("command.admin", "grave_robbery_help", function(src)
+lib.addCommand("grave_robbery_help", {
+    help = "Show admin help for grave robbery",
+    restricted = "command.admin"
+}, function(src)
     local helpText = [[
         Grave Robbery Admin Commands:
         /gr_inspect - View cooldowns/AC data (Console)
@@ -361,6 +368,4 @@ lib.addCommand("command.admin", "grave_robbery_help", function(src)
         description = "Admin commands listed in console",
         type = "inform"
     })
-end, {
-    help = "Show admin help for grave robbery"
-})
+end)
