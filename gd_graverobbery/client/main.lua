@@ -25,8 +25,9 @@ local function createProp(model)
     lib.requestModel(model)
     local ped = cache.ped
     local prop = CreateObject(model, 0, 0, 0, true, true, false)
-    local boneIndex = GetPedBoneIndex(ped, 57005)
-    AttachEntityToEntity(prop, ped, boneIndex, 0.15, 0.05, 0.0, 0.0, 0.0, 0.0, true, true, false, true, 1, true)
+    local boneIndex = GetPedBoneIndex(ped, 28422) -- Right Hand
+    -- Offsets for prop_tool_shovel to sit correctly in hand during random@burial
+    AttachEntityToEntity(prop, ped, boneIndex, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, true, true, false, true, 1, true)
     return prop
 end
 
@@ -40,6 +41,7 @@ end
 local function startDigging(graveIndex)
     local grave = config.Graves[graveIndex]
     debugLog(("Starting dig at grave %d (%s)"):format(graveIndex, grave.label or "Unnamed"))
+    
     local hasItem = exports.ox_inventory:Search("count", config.RequiredItem) > 0
 
     if not hasItem then
@@ -53,9 +55,16 @@ local function startDigging(graveIndex)
 
     isDigging = true
     local ped = cache.ped
-    local prop = createProp(shovelProp)
+    
+    -- Face the grave
+    local coords = grave.coords
+    TaskTurnPedToFaceCoord(ped, coords.x, coords.y, coords.z, 1000)
+    Wait(1000)
 
-    lib.progressBar({
+    -- Create shovel prop
+    local shovel = createProp(shovelProp)
+    
+    local success = lib.progressBar({
         duration = config.DiggingTime,
         label = "Digging grave...",
         useWhileDead = false,
@@ -67,22 +76,22 @@ local function startDigging(graveIndex)
             mouse = false
         },
         anim = {
-            dict = "anim@melee@t@station@low",
-            clip = "low_attack_02",
-            flags = 1
+            dict = "random@burial",
+            clip = "a_burial",
+            flag = 1
         }
     })
 
-    if not isDigging then
+    removeProp(shovel)
+    isDigging = false
+    StopAnimTask(ped, "random@burial", "a_burial", 1.0)
+
+    if not success then
         debugLog("Digging cancelled")
-        removeProp(prop)
         return
     end
 
     debugLog("Digging complete, triggering server event")
-    removeProp(prop)
-    isDigging = false
-
     TriggerServerEvent("grave_robbery:server:digGrave", graveIndex)
 end
 
@@ -98,9 +107,7 @@ local function setupTargets()
                     startDigging(i)
                 end,
                 canInteract = function()
-                    if isDigging then return false end
-                    if cache.vehicle then return false end
-                    return true
+                    return not isDigging and not cache.vehicle
                 end
             }
         }
@@ -108,8 +115,8 @@ local function setupTargets()
         local coords = grave.coords
         exports.ox_target:addBoxZone({
             name = "grave_zone_" .. i,
-            coords = vec3(coords.x, coords.y, coords.z),
-            size = vec3(1.5, 1.5, 1.0),
+            coords = vec3(coords.x, coords.y, coords.z + 1.0),
+            size = vec3(2.0, 2.0, 2.0),
             rotation = 0,
             debug = false,
             options = options
@@ -129,7 +136,6 @@ local function setupTargets()
 end
 
 RegisterNetEvent("grave_robbery:client:syncCooldowns", function(cooldowns)
-    config.Graves = config.Graves
     for i, cooldown in pairs(cooldowns) do
         if config.Graves[i] then
             config.Graves[i].onCooldown = cooldown
@@ -137,11 +143,13 @@ RegisterNetEvent("grave_robbery:client:syncCooldowns", function(cooldowns)
     end
 end)
 
-AddEventHandler("onResourceStart", function(resourceName)
-    if GetCurrentResourceName() ~= resourceName then return end
+CreateThread(function()
     setupTargets()
 end)
 
-CreateThread(function()
-    setupTargets()
+AddEventHandler("onResourceStop", function(resourceName)
+    if GetCurrentResourceName() ~= resourceName then return end
+    if isDigging then
+        ClearPedTasks(cache.ped)
+    end
 end)
