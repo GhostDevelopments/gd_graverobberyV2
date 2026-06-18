@@ -3,7 +3,7 @@ game 'gta5'
 lua54 'yes'
 
 author 'GhostDevelopments'
-description 'Generated with GhostDevelopments'
+description 'A Comprehensive Grave Robbery Script For Your Qbox Server'
 version '1.0.0'
 
 shared_scripts {
